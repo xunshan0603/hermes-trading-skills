@@ -1,0 +1,9 @@
+.env
+*.env
+private_*.json
+*_live_config.json
+journal/
+logs/
+__pycache__/
+*.pyc
+.DS_Store
