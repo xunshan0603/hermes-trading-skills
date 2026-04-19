@@ -1,0 +1,3 @@
+display_name: BTC ETH Campaign Trader
+short_description: BTC/ETH campaign trading guardrails.
+default_prompt: Use this skill to classify BTC/ETH regime, create a risk-controlled OKX trade plan, validate it, and output Chinese explanation plus JSON.
