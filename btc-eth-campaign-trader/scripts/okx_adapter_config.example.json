@@ -1,0 +1,20 @@
+{
+  "exchange": "OKX",
+  "allow_live": false,
+  "dry_run": true,
+  "use_testnet": true,
+  "base_url": "https://www.okx.com",
+  "max_leverage": 5,
+  "default_leverage": 3,
+  "margin_mode": "isolated",
+  "position_mode": "one_way",
+  "max_order_notional_usdt": 650,
+  "max_total_open_risk_pct": 0.04,
+  "max_plan_age_seconds": 300,
+  "max_slippage_pct": 0.003,
+  "require_stop": true,
+  "require_validator_pass": true,
+  "require_isolated_margin": true,
+  "fetch_public_in_dry_run": true,
+  "journal_path": "./journal/okx_decisions.jsonl"
+}
