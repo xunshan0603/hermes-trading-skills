@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-04-20T00:00:00Z",
+  "symbols": {
+    "BTC-USDT-SWAP": {
+      "daily": [
+        {"time": "2026-03-01", "open": 90000, "high": 92000, "low": 89000, "close": 91000},
+        {"time": "2026-03-02", "open": 91000, "high": 93000, "low": 90000, "close": 92500}
+      ]
+    },
+    "ETH-USDT-SWAP": {
+      "daily": [
+        {"time": "2026-03-01", "open": 3200, "high": 3300, "low": 3150, "close": 3260},
+        {"time": "2026-03-02", "open": 3260, "high": 3350, "low": 3220, "close": 3330}
+      ]
+    }
+  }
+}
