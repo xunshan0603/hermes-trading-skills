@@ -1,0 +1,49 @@
+{
+  "decision_id": "2026-04-20T00:00:00Z-OKX-BTC-USDT-SWAP-OPEN_PROBE",
+  "timestamp": "2026-04-20T00:00:00Z",
+  "mode": "paper",
+  "exchange": "OKX",
+  "symbol": "BTC-USDT-SWAP",
+  "decision": "OPEN_PROBE",
+  "side": "long",
+  "state": "PROBE",
+  "regime": {
+    "btc": "bull",
+    "eth": "bull",
+    "symbol": "bull",
+    "basis": "previous close > ma20 > ma60"
+  },
+  "risk": {
+    "account_equity_usdt": 500,
+    "risk_pct": 0.018,
+    "max_loss_usdt": 9,
+    "existing_open_risk_pct": 0,
+    "total_open_risk_after_pct": 0.018,
+    "leverage": 3,
+    "margin_mode": "isolated"
+  },
+  "entry_plan": {
+    "entry_type": "limit",
+    "entry_price": 65000,
+    "stop_price": 64000,
+    "invalidation": "4H pullback low lost",
+    "size_base": 0.009,
+    "notional_usdt": 585,
+    "take_profit_policy": "scale_out_1_5R_3R_trail"
+  },
+  "guardrails": {
+    "no_averaging_down": true,
+    "mae_stop_add_pct": -0.05,
+    "mae_cut_half_pct": -0.08,
+    "mae_exit_pct": -0.12,
+    "time_stop_days": [3, 7, 14]
+  },
+  "validator": {
+    "status": "PENDING",
+    "violations": []
+  },
+  "rationale": [
+    "BTC bull regime permits long probe.",
+    "Risk fits aggressive small-account limits."
+  ]
+}
