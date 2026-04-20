@@ -66,10 +66,20 @@ python scripts/okx_safe_trade_adapter.py \
   --config private_okx_config.json \
   --env .env \
   --allow-live \
-  --execute
+  --execute \
+  --live-confirm-token EXECUTE_ONE_BTC_001
 ```
 
-The private config must set `dry_run=false` and `allow_live=true`. The `.env` file must provide `OKX_API_KEY`, `OKX_API_SECRET`, and `OKX_API_PASSPHRASE`. API keys must not have withdrawal permission.
+The private config must set `dry_run=false`, `allow_live=true`, and a `live_confirm_token` matching the CLI token. The `.env` file must provide `OKX_API_KEY`, `OKX_API_SECRET`, and `OKX_API_PASSPHRASE`. API keys must not have withdrawal permission.
+
+Live execution sequence:
+
+1. Validate plan with `--allow-live`.
+2. Reject stale plans.
+3. Read ticker, instrument, balance, positions, and pending orders when permitted.
+4. Call `/api/v5/account/set-leverage` before placing an order.
+5. Place `/api/v5/trade/order` without a `lever` field in the order body.
+6. Attach stop loss to the order only when `attach_stop_to_order=true`; otherwise place a separate protective stop immediately after the main order is accepted.
 
 ## Execution Rejection
 
@@ -80,5 +90,6 @@ Reject execution if:
 - Stop cannot be placed.
 - Margin mode is not isolated.
 - Leverage exceeds plan.
+- Live confirm token is absent or mismatched.
 - Existing position conflicts with the plan.
 - Validator output is missing or stale.
