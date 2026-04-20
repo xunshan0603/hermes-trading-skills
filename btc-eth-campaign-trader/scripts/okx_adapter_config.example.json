@@ -16,5 +16,7 @@
   "require_validator_pass": true,
   "require_isolated_margin": true,
   "fetch_public_in_dry_run": true,
+  "attach_stop_to_order": true,
+  "live_confirm_token": "",
   "journal_path": "./journal/okx_decisions.jsonl"
 }
