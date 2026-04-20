@@ -154,6 +154,14 @@ class OKXClient:
         q = urllib.parse.urlencode({"instId": inst_id})
         return self.request("GET", f"/api/v5/account/positions?{q}", auth=True)
 
+    def get_open_orders(self, inst_id: str) -> dict[str, Any]:
+        q = urllib.parse.urlencode({"instType": "SWAP", "instId": inst_id})
+        return self.request("GET", f"/api/v5/trade/orders-pending?{q}", auth=True)
+
+    def set_leverage(self, inst_id: str, leverage: str, margin_mode: str) -> dict[str, Any]:
+        payload = {"instId": inst_id, "lever": leverage, "mgnMode": margin_mode}
+        return self.request("POST", "/api/v5/account/set-leverage", payload, auth=True)
+
     def place_order(self, order: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/order", order, auth=True)
 
@@ -192,14 +200,18 @@ def get_nested(data: dict[str, Any], path: str, default=None):
     return cur
 
 
-def plan_to_order(plan: dict[str, Any], config: dict[str, Any], instrument: dict[str, Any] | None = None) -> dict[str, Any]:
+def plan_to_order(
+    plan: dict[str, Any],
+    config: dict[str, Any],
+    instrument: dict[str, Any] | None = None,
+    attach_stop: bool = True,
+) -> dict[str, Any]:
     symbol = plan["symbol"]
     decision = plan["decision"]
     side = plan["side"]
     entry_type = get_nested(plan, "entry_plan.entry_type", "limit")
     entry_price = float(get_nested(plan, "entry_plan.entry_price", 0) or 0)
     stop_price = float(get_nested(plan, "entry_plan.stop_price", 0) or 0)
-    leverage = str(int(float(get_nested(plan, "risk.leverage", config.get("default_leverage", 3)))))
     td_mode = config.get("margin_mode", "isolated")
 
     if decision not in {"OPEN_PROBE", "OPEN_CAMPAIGN", "SCALE_IN", "SCALE_OUT", "EXIT"}:
@@ -239,14 +251,13 @@ def plan_to_order(plan: dict[str, Any], config: dict[str, Any], instrument: dict
         "side": okx_side,
         "ordType": entry_type,
         "sz": sz,
-        "lever": leverage,
         "clOrdId": client_id,
     }
     if entry_type == "limit":
         order["px"] = str(entry_price)
     if decision in {"SCALE_OUT", "EXIT"}:
         order["reduceOnly"] = "true"
-    elif config.get("require_stop", True):
+    elif config.get("require_stop", True) and attach_stop:
         if stop_price <= 0:
             raise AdapterError("stop_required")
         # OKX V5 supports attaching TP/SL algo order objects to order placement.
@@ -278,6 +289,8 @@ def assert_runtime_guards(plan: dict[str, Any], config: dict[str, Any], validato
     if decision in {"OPEN_PROBE", "OPEN_CAMPAIGN", "SCALE_IN"} and config.get("require_stop", True):
         if float(get_nested(plan, "entry_plan.stop_price", 0) or 0) <= 0:
             raise AdapterError("stop_required")
+    if mode == "live" and config.get("allow_live", False) and not config.get("live_confirm_token"):
+        raise AdapterError("live_confirm_token_missing_in_config")
 
 
 def maybe_check_slippage(plan: dict[str, Any], ticker: dict[str, Any], max_slippage_pct: float) -> None:
@@ -299,6 +312,7 @@ def main() -> int:
     parser.add_argument("--env", default="", help="Optional .env file containing OKX credentials.")
     parser.add_argument("--allow-live", action="store_true", help="Allow validator to accept live plans.")
     parser.add_argument("--execute", action="store_true", help="Actually send order when config permits.")
+    parser.add_argument("--live-confirm-token", default="", help="Required one-time token for live execution.")
     args = parser.parse_args()
 
     plan_path = Path(args.plan)
@@ -343,13 +357,28 @@ def main() -> int:
                 record["public_dry_run_warning"] = str(exc)
 
         if not dry_run:
+            if plan.get("mode") == "live":
+                expected_token = str(config.get("live_confirm_token", ""))
+                if not expected_token or args.live_confirm_token != expected_token:
+                    raise AdapterError("live_confirm_token_mismatch")
             ticker = client.get_ticker(plan["symbol"])
             instrument = client.get_instrument(plan["symbol"])
-            client.get_balance()
-            client.get_positions(plan["symbol"])
+            record["account_balance_check"] = client.get_balance()
+            record["positions_check"] = client.get_positions(plan["symbol"])
+            try:
+                record["open_orders_check"] = client.get_open_orders(plan["symbol"])
+            except Exception as exc:  # noqa: BLE001 - not all API keys expose pending-order reads.
+                record["open_orders_warning"] = str(exc)
+            leverage = str(int(float(get_nested(plan, "risk.leverage", config.get("default_leverage", 1)))))
+            td_mode = config.get("margin_mode", "isolated")
+            record["set_leverage_request"] = {"instId": plan["symbol"], "lever": leverage, "mgnMode": td_mode}
+            record["set_leverage_response"] = client.set_leverage(plan["symbol"], leverage, td_mode)
             maybe_check_slippage(plan, ticker, float(config.get("max_slippage_pct", 0.003)))
-        order = plan_to_order(plan, config, instrument=instrument)
+        attach_stop = bool(config.get("attach_stop_to_order", True))
+        order = plan_to_order(plan, config, instrument=instrument, attach_stop=attach_stop)
         record["order_request"] = order
+        if config.get("require_stop", True) and not attach_stop and plan.get("decision") not in {"SCALE_OUT", "EXIT"}:
+            record["stop_notice"] = "Stop is required by plan, but attach_stop_to_order=false. Place a separate protective stop immediately after main-order acceptance."
 
         if dry_run:
             record["status"] = "DRY_RUN"
