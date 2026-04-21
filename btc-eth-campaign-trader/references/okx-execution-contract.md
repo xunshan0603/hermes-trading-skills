@@ -80,6 +80,17 @@ Live execution sequence:
 4. Call `/api/v5/account/set-leverage` before placing an order.
 5. Place `/api/v5/trade/order` without a `lever` field in the order body.
 6. Attach stop loss to the order only when `attach_stop_to_order=true`; otherwise place a separate protective stop immediately after the main order is accepted.
+7. Immediately reconcile the main order, current position, and pending orders.
+8. If a protective stop is required and missing:
+   - For an open position, place a separate reduce-only stop.
+   - If the separate stop fails, send a reduce-only market emergency close.
+   - For an unfilled unsafe pending order, cancel the pending order.
+
+After live execution, the adapter should end in one of these states:
+
+- `PROTECTED_OR_FLAT`
+- `EMERGENCY_CLOSED_NO_STOP`
+- `CANCELED_UNPROTECTED_PENDING_ORDER`
 
 ## Execution Rejection
 
