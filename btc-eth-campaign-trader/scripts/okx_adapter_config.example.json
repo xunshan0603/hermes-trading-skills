@@ -6,6 +6,7 @@
   "base_url": "https://www.okx.com",
   "max_leverage": 5,
   "default_leverage": 3,
+  "set_leverage_before_order": true,
   "margin_mode": "isolated",
   "position_mode": "one_way",
   "max_order_notional_usdt": 650,
