@@ -531,8 +531,16 @@ def main() -> int:
                 record["open_orders_warning"] = str(exc)
             leverage = str(int(float(get_nested(plan, "risk.leverage", config.get("default_leverage", 1)))))
             td_mode = config.get("margin_mode", "isolated")
-            record["set_leverage_request"] = {"instId": plan["symbol"], "lever": leverage, "mgnMode": td_mode}
-            record["set_leverage_response"] = client.set_leverage(plan["symbol"], leverage, td_mode)
+            if bool(config.get("set_leverage_before_order", True)):
+                record["set_leverage_request"] = {"instId": plan["symbol"], "lever": leverage, "mgnMode": td_mode}
+                record["set_leverage_response"] = client.set_leverage(plan["symbol"], leverage, td_mode)
+            else:
+                record["set_leverage_skipped"] = {
+                    "instId": plan["symbol"],
+                    "lever": leverage,
+                    "mgnMode": td_mode,
+                    "reason": "config:set_leverage_before_order=false",
+                }
             maybe_check_slippage(plan, ticker, float(config.get("max_slippage_pct", 0.003)))
         attach_stop = bool(config.get("attach_stop_to_order", True))
         order = plan_to_order(plan, config, instrument=instrument, attach_stop=attach_stop)
