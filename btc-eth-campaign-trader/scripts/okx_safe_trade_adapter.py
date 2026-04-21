@@ -165,6 +165,26 @@ class OKXClient:
     def place_order(self, order: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/order", order, auth=True)
 
+    def get_order(self, inst_id: str, ord_id: str = "", cl_ord_id: str = "") -> dict[str, Any]:
+        params = {"instId": inst_id}
+        if ord_id:
+            params["ordId"] = ord_id
+        if cl_ord_id:
+            params["clOrdId"] = cl_ord_id
+        q = urllib.parse.urlencode(params)
+        return self.request("GET", f"/api/v5/trade/order?{q}", auth=True)
+
+    def cancel_order(self, inst_id: str, ord_id: str = "", cl_ord_id: str = "") -> dict[str, Any]:
+        payload = {"instId": inst_id}
+        if ord_id:
+            payload["ordId"] = ord_id
+        if cl_ord_id:
+            payload["clOrdId"] = cl_ord_id
+        return self.request("POST", "/api/v5/trade/cancel-order", payload, auth=True)
+
+    def place_algo_order(self, order: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/api/v5/trade/order-algo", order, auth=True)
+
 
 def run_validator(plan_path: Path, allow_live: bool) -> dict[str, Any]:
     cmd = [sys.executable, str(VALIDATOR), str(plan_path)]
@@ -260,8 +280,6 @@ def plan_to_order(
     elif config.get("require_stop", True) and attach_stop:
         if stop_price <= 0:
             raise AdapterError("stop_required")
-        # OKX V5 supports attaching TP/SL algo order objects to order placement.
-        # slOrdPx=-1 requests market execution when the trigger fires.
         order["attachAlgoOrds"] = [
             {
                 "slTriggerPx": str(stop_price),
@@ -303,6 +321,148 @@ def maybe_check_slippage(plan: dict[str, Any], ticker: dict[str, Any], max_slipp
         raise AdapterError("cannot_check_slippage")
     if abs(last / entry - 1) > max_slippage_pct:
         raise AdapterError("market_price_slippage_exceeds_config")
+
+
+def first_okx_row(response: dict[str, Any], label: str) -> dict[str, Any]:
+    rows = response.get("data") or []
+    if not rows:
+        raise AdapterError(f"{label}_missing_response_data")
+    row = rows[0]
+    if row.get("sCode") not in (None, "", "0", 0):
+        raise AdapterError(f"{label}_rejected:{row}")
+    return row
+
+
+def position_size(response: dict[str, Any]) -> float:
+    total = 0.0
+    for row in response.get("data") or []:
+        try:
+            total += abs(float(row.get("pos") or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def has_pending_stop(response: dict[str, Any], inst_id: str) -> bool:
+    for row in response.get("data") or []:
+        if row.get("instId") != inst_id:
+            continue
+        ord_type = str(row.get("ordType") or row.get("algoOrdType") or "").lower()
+        if "conditional" in ord_type or "oco" in ord_type or row.get("slTriggerPx"):
+            return True
+    return False
+
+
+def build_separate_stop_order(plan: dict[str, Any], config: dict[str, Any], size: str) -> dict[str, Any]:
+    stop_price = float(get_nested(plan, "entry_plan.stop_price", 0) or 0)
+    if stop_price <= 0:
+        raise AdapterError("stop_required")
+    side = plan["side"]
+    if side == "long":
+        close_side = "sell"
+    elif side == "short":
+        close_side = "buy"
+    else:
+        raise AdapterError("stop_requires_position_side")
+    raw_client_id = str(plan.get("decision_id", ""))
+    client_id = re.sub(r"[^A-Za-z0-9]", "", raw_client_id)[-24:] or str(int(time.time()))
+    return {
+        "instId": plan["symbol"],
+        "tdMode": config.get("margin_mode", "isolated"),
+        "side": close_side,
+        "ordType": "conditional",
+        "sz": size,
+        "slTriggerPx": str(stop_price),
+        "slOrdPx": "-1",
+        "slTriggerPxType": "last",
+        "reduceOnly": "true",
+        "algoClOrdId": f"S{client_id}",
+    }
+
+
+def build_emergency_close_order(plan: dict[str, Any], config: dict[str, Any], size: str) -> dict[str, Any]:
+    side = plan["side"]
+    if side == "long":
+        close_side = "sell"
+    elif side == "short":
+        close_side = "buy"
+    else:
+        raise AdapterError("close_requires_position_side")
+    raw_client_id = str(plan.get("decision_id", ""))
+    client_id = re.sub(r"[^A-Za-z0-9]", "", raw_client_id)[-24:] or str(int(time.time()))
+    return {
+        "instId": plan["symbol"],
+        "tdMode": config.get("margin_mode", "isolated"),
+        "side": close_side,
+        "ordType": "market",
+        "sz": size,
+        "reduceOnly": "true",
+        "clOrdId": f"X{client_id}",
+    }
+
+
+def reconcile_after_order(client: OKXClient, plan: dict[str, Any], config: dict[str, Any], order: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
+    inst_id = plan["symbol"]
+    record: dict[str, Any] = {}
+    row = first_okx_row(response, "main_order")
+    ord_id = str(row.get("ordId") or "")
+    cl_ord_id = str(order.get("clOrdId") or "")
+    record["main_order_row"] = row
+    time.sleep(float(config.get("post_order_reconcile_delay_seconds", 1.0)))
+    try:
+        order_status = client.get_order(inst_id, ord_id=ord_id, cl_ord_id=cl_ord_id)
+        record["main_order_status"] = order_status
+        status_row = first_okx_row(order_status, "main_order_status")
+    except Exception as exc:  # noqa: BLE001
+        record["main_order_status_warning"] = str(exc)
+        status_row = row
+
+    state = str(status_row.get("state") or row.get("state") or "").lower()
+    positions = client.get_positions(inst_id)
+    record["post_order_positions"] = positions
+    pos_size = position_size(positions)
+    record["post_order_position_size"] = pos_size
+
+    try:
+        pending = client.get_open_orders(inst_id)
+        record["post_order_pending_orders"] = pending
+    except Exception as exc:  # noqa: BLE001
+        pending = {"data": []}
+        record["post_order_pending_orders_warning"] = str(exc)
+
+    stop_exists = has_pending_stop(pending, inst_id)
+    record["post_order_stop_detected"] = stop_exists
+    protective_stop_required = bool(config.get("require_stop", True)) and plan.get("decision") not in {"SCALE_OUT", "EXIT"}
+
+    if protective_stop_required and not stop_exists:
+        size = str(order.get("sz") or "")
+        if pos_size > 0:
+            try:
+                stop_order = build_separate_stop_order(plan, config, size)
+                record["separate_stop_request"] = stop_order
+                stop_response = client.place_algo_order(stop_order)
+                record["separate_stop_response"] = stop_response
+                first_okx_row(stop_response, "separate_stop")
+            except Exception as exc:  # noqa: BLE001
+                record["separate_stop_error"] = str(exc)
+                close_order = build_emergency_close_order(plan, config, size)
+                record["emergency_close_request"] = close_order
+                close_response = client.place_order(close_order)
+                record["emergency_close_response"] = close_response
+                first_okx_row(close_response, "emergency_close")
+                record["status_after_reconcile"] = "EMERGENCY_CLOSED_NO_STOP"
+                return record
+        elif state in {"live", "partially_filled", "partially-filled", "open"}:
+            try:
+                record["unsafe_pending_cancel_response"] = client.cancel_order(inst_id, ord_id=ord_id, cl_ord_id=cl_ord_id)
+                record["status_after_reconcile"] = "CANCELED_UNPROTECTED_PENDING_ORDER"
+                return record
+            except Exception as exc:  # noqa: BLE001
+                record["unsafe_pending_cancel_error"] = str(exc)
+                raise AdapterError("unprotected_pending_order_cancel_failed") from exc
+
+    record["status_after_reconcile"] = "PROTECTED_OR_FLAT"
+    return record
 
 
 def main() -> int:
@@ -385,8 +545,9 @@ def main() -> int:
             record["message"] = "Order was not sent. Set config dry_run=false, mode live/testnet, and pass --execute when ready."
         else:
             response = client.place_order(order)
-            record["status"] = "SENT"
             record["okx_response"] = response
+            record["post_order_reconcile"] = reconcile_after_order(client, plan, config, order, response)
+            record["status"] = "SENT_RECONCILED"
 
     except Exception as exc:  # noqa: BLE001 - adapter must journal all failures.
         record["status"] = "REJECTED"
