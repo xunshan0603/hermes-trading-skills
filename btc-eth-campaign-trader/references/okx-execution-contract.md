@@ -77,7 +77,7 @@ Live execution sequence:
 1. Validate plan with `--allow-live`.
 2. Reject stale plans.
 3. Read ticker, instrument, balance, positions, and pending orders when permitted.
-4. Call `/api/v5/account/set-leverage` before placing an order.
+4. Call `/api/v5/account/set-leverage` before placing an order when `set_leverage_before_order=true`. Accounts that are already pinned to the desired leverage/margin mode may set `set_leverage_before_order=false` to skip this preflight.
 5. Place `/api/v5/trade/order` without a `lever` field in the order body.
 6. Attach stop loss to the order only when `attach_stop_to_order=true`; otherwise place a separate protective stop immediately after the main order is accepted.
 7. Immediately reconcile the main order, current position, and pending orders.
